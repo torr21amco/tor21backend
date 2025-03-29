@@ -19,10 +19,18 @@ logger = logging.getLogger(__name__)
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_USERNAME = os.getenv("REDIS_USERNAME", "default")  # Añadir usuario predeterminado
 
 # Conectar a Redis
 try:
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+    r = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        username=REDIS_USERNAME,  # Especificar el usuario
+        password=REDIS_PASSWORD
+    )
     r.ping()  # Probar la conexión
     logger.info("Conectado a Redis correctamente.")
 except redis.ConnectionError as e:
