@@ -10,6 +10,10 @@ import asyncio
 from typing import List, Dict
 import json
 import os
+from pydantic import BaseModel
+from cryptography.fernet import Fernet
+import base64
+import requests
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -157,6 +161,78 @@ async def report_activity(request: Request):
 @app.get("/reports", response_model=List[Dict])
 async def get_reports():
     return reports
+
+# Modelo para validar los datos de entrada del endpoint /encrypt-and-upload
+class EncryptUploadRequest(BaseModel):
+    data: str
+    userAddress: str
+    timestamp: int
+
+# Configuración de la clave de encriptación
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+if not ENCRYPTION_KEY:
+    raise Exception("La variable de entorno ENCRYPTION_KEY no está definida.")
+# Convertir la clave a un formato compatible con Fernet (base64)
+try:
+    ENCRYPTION_KEY = base64.urlsafe_b64encode(ENCRYPTION_KEY.encode()[:32].ljust(32, b'\0'))
+    fernet = Fernet(ENCRYPTION_KEY)
+except Exception as e:
+    logger.error(f"Error al configurar la clave de encriptación: {e}")
+    raise Exception("Error al configurar la clave de encriptación.")
+
+# Configuración de la API Key de Fleek
+FLEEK_API_KEY = os.getenv("FLEEK_API_KEY")
+if not FLEEK_API_KEY:
+    raise Exception("La variable de entorno FLEEK_API_KEY no está definida.")
+
+# Endpoint para encriptar y subir a IPFS
+@app.post("/encrypt-and-upload")
+async def encrypt_and_upload(request: EncryptUploadRequest):
+    try:
+        # Extraer los datos del cuerpo de la solicitud
+        data = request.data
+        user_address = request.userAddress
+        timestamp = request.timestamp
+
+        # Validar los datos
+        if not data or not user_address or not timestamp:
+            raise HTTPException(status_code=400, detail="Faltan datos: data, userAddress y timestamp son requeridos")
+
+        # Encriptar los datos usando Fernet
+        encrypted_data = fernet.encrypt(data.encode()).decode()
+
+        # Preparar los datos para subir a IPFS
+        files = {
+            'file': ('encrypted_data.txt', encrypted_data.encode())
+        }
+        headers = {
+            'Authorization': f'Bearer {FLEEK_API_KEY}'
+        }
+
+        # Subir el archivo a IPFS usando la API de Fleek
+        response = requests.post(
+            'https://ipfs.fleek.co/api/v0/add',
+            files=files,
+            headers=headers
+        )
+
+        # Verificar la respuesta de Fleek
+        if response.status_code != 200:
+            logger.error(f"Error al subir a IPFS: {response.text}")
+            raise HTTPException(status_code=500, detail=f"Error al subir a IPFS: {response.text}")
+
+        # Extraer el CID de la respuesta
+        result = response.json()
+        cid = result.get('Hash')
+        if not cid:
+            raise HTTPException(status_code=500, detail="No se pudo obtener el CID de IPFS")
+
+        logger.info(f"Archivo subido a IPFS con CID: {cid}")
+        return {"cid": cid}
+
+    except Exception as e:
+        logger.error(f"Error en /encrypt-and-upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al subir a IPFS: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
